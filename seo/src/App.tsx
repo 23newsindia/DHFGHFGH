@@ -175,14 +175,31 @@ function checkParagraphLength(text: string): SEOCheckResult {
   return { score, suggestions };
 }
 
+// Update the countSyllables function to be more accurate
 function countSyllables(text: string): number {
-  const word = text.toLowerCase()
-    .replace(/[^a-z]/g, '')
-    .replace(/e\b/g, '') // Remove trailing 'e'
-    .replace(/[aeiou]{2,}/g, 'a') // Count consecutive vowels as one
-    .match(/[aeiouy]/g);
+  text = text.toLowerCase().trim();
+  if (!text) return 0;
   
-  return word ? word.length : 0;
+  // Remove non-word characters except apostrophes
+  text = text.replace(/[^a-z'\s]/g, '');
+  
+  // Special cases
+  text = text.replace(/([^aeiouy])\1+/g, '$1'); // Double consonants
+  text = text.replace(/^y/, ''); // Y at start is not a vowel
+  
+  // Count vowel groups
+  let syllables = text.match(/[aeiouy]+/g);
+  
+  // Handle special cases
+  if (!syllables) return 0;
+  
+  // Subtract silent E's
+  if (text.match(/[aeiouy]e\b/)) syllables.length--;
+  
+  // Add syllables for special cases
+  if (text.match(/(le|ia|io)\b/)) syllables.length++;
+  
+  return syllables.length;
 }
 
 
@@ -205,37 +222,47 @@ function calculateReadabilityScore(text: string): number {
   return Math.round(score);
 }
 
+// Update sentence complexity analysis
 function analyzeReadability(text: string) {
-  const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+  const sentences = text.split(/[.!?]+\s+/).filter(s => s.trim().length > 0);
   const hardSentences: string[] = [];
   const veryHardSentences: string[] = [];
   
   sentences.forEach(sentence => {
     const words = sentence.trim().split(/\s+/);
     const wordCount = words.length;
+    
+    // Calculate complexity metrics
     const syllables = words.reduce((count, word) => count + countSyllables(word), 0);
     const avgSyllablesPerWord = syllables / wordCount;
+    const complexWords = words.filter(word => countSyllables(word) >= 3).length;
+    const complexityRatio = complexWords / wordCount;
     
-    // Adjusted thresholds to match Hemingway more closely
-    if (wordCount > 30 || avgSyllablesPerWord > 2.5) {
-      veryHardSentences.push(sentence.trim());
-    } else if (wordCount > 20 || avgSyllablesPerWord > 2.0) {
-      hardSentences.push(sentence.trim());
+    // Hemingway-style rules
+    if (wordCount >= 20 || (wordCount >= 14 && complexityRatio >= 0.2)) {
+      if (wordCount >= 30 || (wordCount >= 25 && complexityRatio >= 0.3)) {
+        veryHardSentences.push(sentence.trim());
+      } else {
+        hardSentences.push(sentence.trim());
+      }
     }
   });
 
-   const words = text.split(/\s+/).filter(w => w.length > 0);
-  const totalSyllables = words.reduce((count, word) => count + countSyllables(word), 0);
+  // Calculate grade level using Flesch-Kincaid
+  const totalWords = sentences.reduce((count, sent) => count + sent.split(/\s+/).length, 0);
+  const totalSyllables = sentences.reduce((count, sent) => 
+    count + sent.split(/\s+/).reduce((c, word) => c + countSyllables(word), 0), 0);
   
-  // Adjusted grade level calculation
+  const avgWordsPerSentence = totalWords / sentences.length;
+  const avgSyllablesPerWord = totalSyllables / totalWords;
+  
+  // Adjusted Flesch-Kincaid formula to match Hemingway more closely
   const grade = Math.round(
-    0.39 * (words.length / sentences.length) +
-    11.8 * (totalSyllables / words.length) - 
-    15.59
+    0.39 * avgWordsPerSentence + 11.8 * avgSyllablesPerWord - 15.59
   );
 
   return {
-    score: calculateReadabilityScore(text),
+    score: 100 - (grade * 10), // Convert grade to score
     hardSentences,
     veryHardSentences,
     grade: Math.max(1, Math.min(12, grade))
@@ -277,65 +304,59 @@ function App() {
   const [hardSentenceRanges, setHardSentenceRanges] = useState<Array<{ start: number; end: number; type: 'hard' | 'veryHard' }>>([]);
   
   
-   // Analyze SEO and readability
- const analyzeSEO = async (text: string) => {
-    // First, clean the text for analysis while preserving the original HTML structure
-    const cleanText = text.replace(/<[^>]*>/g, '');
-    
-    // Run readability analysis on clean text
-    const readabilityResult = analyzeReadability(cleanText);
-    
-   setReadabilityScore(readabilityResult.score);
-    setGrade(readabilityResult.grade);
-    setHardSentences(readabilityResult.hardSentences);
-    setVeryHardSentences(readabilityResult.veryHardSentences);
+const analyzeSEO = async (text: string) => {
+  // Clean text for analysis while preserving HTML
+  const cleanText = text.replace(/<[^>]*>/g, '');
+  
+  // Run readability analysis
+  const readabilityResult = analyzeReadability(cleanText);
+  
+  setReadabilityScore(readabilityResult.score);
+  setGrade(readabilityResult.grade);
+  setHardSentences(readabilityResult.hardSentences);
+  setVeryHardSentences(readabilityResult.veryHardSentences);
 
- // Create a temporary div to work with the HTML content
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = text;
+
+  // Create a temporary div for HTML manipulation
+  const tempDiv = document.createElement('div');
+  tempDiv.innerHTML = text;
     
-    // Function to process text nodes and wrap sentences
-    const processTextNode = (node: Text) => {
-      const text = node.textContent || '';
-      const sentences = text.split(/(?<=[.!?])\s+/);
-      
-      if (sentences.length <= 1) return;
-      
-      
-       const fragment = document.createDocumentFragment();
-      sentences.forEach((sentence, index) => {
-        const trimmedSentence = sentence.trim();
-        if (!trimmedSentence) return;
+  // Helper function to wrap text in highlight spans
+  const wrapTextInHighlights = (node: Text) => {
+    const text = node.textContent || '';
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    
+      const fragment = document.createDocumentFragment();
+    sentences.forEach((sentence, index) => {
+      const trimmedSentence = sentence.trim();
+      if (!trimmedSentence) return;
         
          const span = document.createElement('span');
-        if (readabilityResult.veryHardSentences.includes(trimmedSentence)) {
-          span.className = 'very-hard';
-        } else if (readabilityResult.hardSentences.includes(trimmedSentence)) {
-          span.className = 'hard';
-        }
-        span.textContent = sentence;
-        
-        fragment.appendChild(span);
-        if (index < sentences.length - 1) {
-          fragment.appendChild(document.createTextNode(' '));
-        }
-      });
-      
-       node.parentNode?.replaceChild(fragment, node);
-    };
-    
-    
-      // Recursively process all text nodes
-    const processNode = (node: Node) => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        processTextNode(node as Text);
-      } else {
-        Array.from(node.childNodes).forEach(processNode);
+      if (readabilityResult.veryHardSentences.includes(trimmedSentence)) {
+        span.className = 'very-hard';
+      } else if (readabilityResult.hardSentences.includes(trimmedSentence)) {
+        span.className = 'hard';
       }
-    };
-
-    processNode(tempDiv);
+      span.textContent = sentence + (index < sentences.length - 1 ? ' ' : '');
+      fragment.appendChild(span);
+    });
     
+    node.parentNode?.replaceChild(fragment, node);
+  };
+  
+  
+    // Process all text nodes
+  const walkTextNodes = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE && node.textContent?.trim()) {
+      wrapTextInHighlights(node as Text);
+    } else {
+      Array.from(node.childNodes).forEach(walkTextNodes);
+    }
+  };
+
+  walkTextNodes(tempDiv);
+  
+  
     
 
     // Split text into sentences while preserving HTML
@@ -399,7 +420,7 @@ function App() {
     setSuggestions(newSuggestions);
     
     // Update content with highlights
-    setContent(tempDiv.innerHTML);
+     setContent(tempDiv.innerHTML);
   };
 
   
