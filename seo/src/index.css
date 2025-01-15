@@ -61,3 +61,24 @@
   display: inline !important;
   color: #92400E;
 }
+
+
+/* In src/index.css */
+
+[contenteditable] .very-hard {
+  background-color: #f9d7d7 !important;
+  border-bottom: 2px solid #e05252 !important;
+  display: inline !important;
+}
+
+[contenteditable] .hard {
+  background-color: #ffefd1 !important;
+  border-bottom: 2px solid #e09b25 !important;
+  display: inline !important;
+}
+
+/* Add transition for smoother highlighting */
+[contenteditable] .very-hard,
+[contenteditable] .hard {
+  transition: background-color 0.2s ease-in-out;
+}
